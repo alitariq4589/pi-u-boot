@@ -33,19 +33,19 @@ static int do_get_part_info(struct blk_desc **dev_desc, const char *name,
 			    struct disk_partition *info)
 {
 	int ret = -1;
-#ifdef CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME
-	if (strlen(CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME) > 0){
+	char *blk_dev;
+	int blk_index = -1;
 
-		/* First try partition names on the default device */
-		*dev_desc = blk_get_dev(CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME,
-							 CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_INDEX);
-		if (*dev_desc) {
-			ret = part_get_info_by_name(*dev_desc, name, info);
-			if (ret >= 0)
-				return ret;
-		}
+	if (get_available_blk_dev(&blk_dev, &blk_index))
+		return -1;
+
+	/* First try partition names on the default device */
+	*dev_desc = blk_get_dev(blk_dev, blk_index);
+	if (*dev_desc) {
+		ret = part_get_info_by_name(*dev_desc, name, info);
+		if (ret >= 0)
+			return ret;
 	}
-#endif
 
 	printf("has not define block device name \n");
 	return ret;
@@ -182,7 +182,7 @@ void fastboot_blk_flash_write(const char *cmd, void *download_buffer,
 	/*save crc value to compare after flash image*/
 	u64 compare_val = 0;
 	/*use for gzip image*/
-	static u32 __maybe_unused part_offset_t = 0;
+	static ulong __maybe_unused part_offset_t = 0;
 	static char __maybe_unused part_name_t[20] = "";
 	unsigned long __maybe_unused src_len = ~0UL;
 	bool gzip_image = false;
@@ -218,7 +218,7 @@ void fastboot_blk_flash_write(const char *cmd, void *download_buffer,
 	if (fastboot_blk_get_part_info(cmd, &dev_desc, &info, response) < 0)
 		return;
 
-	if (gzip_parse_header((uchar *)download_buffer, src_len) >= 0) {
+	if (check_gzip_format((uchar *)download_buffer, src_len) >= 0) {
 		/*is gzip data and equal part name*/
 		gzip_image = true;
 		if (strcmp(cmd, part_name_t)){

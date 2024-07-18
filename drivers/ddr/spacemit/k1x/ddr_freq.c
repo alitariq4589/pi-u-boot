@@ -102,6 +102,7 @@ enum DCLK_BYPASS_sel {
 #define FREQ_MAX		~(0U)
 
 u32 ddr_cs_num = DDR_CS_NUM;
+const char *ddr_type;
 
 static u32 mode_register_read(u32 MR, u32 CH, u32 CS)
 {
@@ -119,6 +120,14 @@ static u32 mode_register_read(u32 MR, u32 CH, u32 CS)
 	return UI3;
 }
 
+u32 ddr_get_mr8(void)
+{
+	u32 mr8;
+	mr8 = mode_register_read(8, 0, 0);
+	return (mr8&0xff);
+}
+
+#ifdef CONFIG_SPL_BUILD
 static u32 format_size(u32 density, u32 io_width)
 {
 	u32 size = 0;
@@ -154,21 +163,42 @@ static u32 format_size(u32 density, u32 io_width)
 
 	return size;
 }
-
-u32 ddr_get_mr8(void)
+#else
+static inline u32 map_format_size(u32 val)
 {
-	u32 mr8;
-	mr8 = mode_register_read(8, 0, 0);
-	return (mr8&0xff);
+	u32 tmp;
+
+	tmp = (val & 0x1);
+	if (tmp == 0)
+		return 0;
+	tmp = (val & 0x1f0000) >> 16;
+	switch (tmp) {
+	case 0xd:
+		return 512;
+	case 0xe:
+		return 1024;
+	case 0xf:
+		return 2048;
+	case 0x10:
+		return 4096;
+	case 0x11:
+		return 8192;
+	default:
+		printf("donot support such density=0x%x device\n", val);
+		return 0;
+		break;
+	}
 }
+#endif
 
 u32 ddr_get_density(void)
 {
 	u32 ddr_size = 0;
-	u32 mr8_cs00, mr8_cs01, mr8_cs10, mr8_cs11;
-	u32 io_width_cs00, io_width_cs01, io_width_cs10, io_width_cs11;
 	u32 cs0_size = 0;
 	u32 cs1_size = 0;
+#ifdef CONFIG_SPL_BUILD
+	u32 mr8_cs00, mr8_cs01, mr8_cs10, mr8_cs11;
+	u32 io_width_cs00, io_width_cs01, io_width_cs10, io_width_cs11;
 
 	mr8_cs00 = mode_register_read(8, 0, 0);
 	mr8_cs01 = mode_register_read(8, 1, 0);
@@ -176,8 +206,8 @@ u32 ddr_get_density(void)
 	io_width_cs00 = mr8_cs00 ? mr8_cs00 >> 6 : 0;
 	io_width_cs01 = mr8_cs01 ? mr8_cs01 >> 6 : 0;
 
-	cs0_size = mr8_cs00 ? format_size(((mr8_cs00 >> 2) & 0xf), io_width_cs00) : 0;
-	cs0_size += mr8_cs01 ? format_size(((mr8_cs01 >> 2) & 0xf), io_width_cs01) : 0;
+	cs0_size = (mr8_cs00 != 0xFF) ? format_size(((mr8_cs00 >> 2) & 0xf), io_width_cs00) : 0;
+	cs0_size += (mr8_cs01 != 0xFF) ? format_size(((mr8_cs01 >> 2) & 0xf), io_width_cs01) : 0;
 
 	if (ddr_cs_num > 1) {
 		mr8_cs10 = mode_register_read(8, 0, 1);
@@ -186,13 +216,18 @@ u32 ddr_get_density(void)
 		io_width_cs10 = mr8_cs10 ? mr8_cs10 >> 6 : 0;
 		io_width_cs11 = mr8_cs11 ? mr8_cs11 >> 6 : 0;
 
-		cs1_size = mr8_cs10 ? format_size(((mr8_cs10 >> 2) & 0xf), io_width_cs10) : 0;
-		cs1_size += mr8_cs11 ? format_size(((mr8_cs11 >> 2) & 0xf), io_width_cs11) : 0;
+		cs1_size = (mr8_cs10 != 0xFF) ? format_size(((mr8_cs10 >> 2) & 0xf), io_width_cs10) : 0;
+		cs1_size += (mr8_cs11 != 0xFF) ? format_size(((mr8_cs11 >> 2) & 0xf), io_width_cs11) : 0;
 	}
+#else
+	cs0_size = map_format_size(readl((void*)0xc0000000 + 0x200));
+	if (ddr_cs_num > 1) {
+		cs1_size = map_format_size(readl((void*)0xc0000000 + 0x208));
+	}
+#endif
 
 	ddr_size = cs0_size + cs1_size;
 	pr_info("DDR size = %d MB\n", ddr_size);
-
 	return ddr_size;
 }
 
@@ -218,11 +253,9 @@ uint32_t get_ddr_rev_id(void)
 /* adjust ddr frequency to the max value */
 int ddr_freq_max(void)
 {
-//	return ddr_freq_change(MAX_FREQ_LV - 1);
+//	return ddr_freq_change(freq_levels[MAX_FREQ_LV - 1].data_rate);
 	return 0;
 }
-
-#ifndef CONFIG_SPL_BUILD
 
 static struct dfc_level_config freq_levels[MAX_FREQ_LV] =
 {
@@ -245,6 +278,17 @@ static int get_cur_freq_level(void)
 	level = (level >> 1) & 0x7;
 
 	return level;
+}
+
+static int get_datarate_freq_level(uint32_t data_rate)
+{
+	int i;
+	for (i = ARRAY_SIZE(freq_levels) - 1; i >= 0; i--) {
+		if (data_rate >= freq_levels[i].data_rate)
+			return freq_levels[i].freq_lv;
+	}
+
+	return freq_levels[1].freq_lv;
 }
 
 static int dfc_bypass_conf(struct dfc_level_config *cfg)
@@ -464,9 +508,9 @@ static int ddr_freq_init(void)
 	return 0;
 }
 
-static int ddr_freq_change(u32 freq_level)
+int ddr_freq_change(u32 data_rate)
 {
-	int ret, freq_curr;
+	int ret, freq_curr, freq_level;
 
 	ret = ddr_freq_init();
 	if (ret < 0) {
@@ -475,6 +519,7 @@ static int ddr_freq_change(u32 freq_level)
 	}
 
 	freq_curr = get_cur_freq_level();
+	freq_level = get_datarate_freq_level(data_rate);
 
 	if(freq_curr == freq_level) {
 		/* dram frequency is same as the target already */
@@ -501,14 +546,15 @@ static int ddr_freq_change(u32 freq_level)
 	clear_dfc_int_status();
 	enable_dfc_int(false);
 
-	pr_info("%s: ddr frequency change from level %d to %d\n", __func__, freq_curr, get_cur_freq_level());
+	printf("Change DDR data rate to %dMT/s\n", freq_levels[get_cur_freq_level()].data_rate);
 
 	return 0;
 }
 
+#ifndef CONFIG_SPL_BUILD
 int do_ddr_freq(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[])
 {
-	u32 freq_level;
+	u32 datarate;
 	int i;
 
 	if (argc <= 1 || argc > 2) {
@@ -527,22 +573,22 @@ int do_ddr_freq(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[])
 		return CMD_RET_SUCCESS;
 	}
 
-	freq_level = simple_strtoul(argv[1], NULL, 0);
-	if(freq_level >= MAX_FREQ_LV) {
+	datarate = simple_strtoul(argv[1], NULL, 0);
+	if ((datarate > freq_levels[MAX_FREQ_LV - 1].data_rate)
+		|| (datarate < freq_levels[0].data_rate)) {
 		/* invalid parameter, report error */
 		return CMD_RET_USAGE;
 	}
 
-	ddr_freq_change(freq_level);
-	pr_info("Change DDR data rate to %dMT/s\n", freq_levels[get_cur_freq_level()].data_rate);
+	ddr_freq_change(datarate);
 
 	return CMD_RET_SUCCESS;
 }
 
 U_BOOT_CMD(
 	ddrfreq, CONFIG_SYS_MAXARGS, 1, do_ddr_freq,
-	"Adjusting the DRAM working frequency",
-	"ddrfreq list	- display the valid frequncy points\n"
-	"ddrfreq [0~7]	- adjust dram working frequency to level[0~7]"
+	"Adjusting the DRAM working data rate",
+	"list		- display the valid data rate list\n"
+	"ddrfreq [600~3200]	- adjust dram working data rate"
 );
 #endif

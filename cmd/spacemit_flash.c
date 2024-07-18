@@ -28,6 +28,7 @@
 #include <mtd.h>
 #include <fb_mtd.h>
 #include <nvme.h>
+#include <watchdog.h>
 
 static int dev_emmc_num = -1;
 static int dev_sdio_num = -1;
@@ -49,98 +50,6 @@ static void free_flash_dev(struct flash_dev *fdev)
 	free(fdev->gptinfo.gpt_table);
 	free(fdev->mtd_table);
 	free(fdev);
-}
-
-
-static int _write_gpt_partition(struct flash_dev *fdev)
-{
-	__maybe_unused char write_part_command[300] = {"\0"};
-	char *gpt_table_str = NULL;
-
-	u32 boot_mode = get_boot_pin_select();
-
-	if (fdev->gptinfo.gpt_table != NULL && strlen(fdev->gptinfo.gpt_table) > 0){
-		gpt_table_str = malloc(strlen(fdev->gptinfo.gpt_table) + 32);
-		if (gpt_table_str == NULL){
-			return -1;
-		}
-		sprintf(gpt_table_str, "env set -f partitions '%s'", fdev->gptinfo.gpt_table);
-		run_command(gpt_table_str, 0);
-		free(gpt_table_str);
-	}
-
-	switch(boot_mode){
-#if CONFIG_IS_ENABLED(FASTBOOT_FLASH_MMC) || CONFIG_IS_ENABLED(FASTBOOT_MULTI_FLASH_OPTION_MMC)
-	case BOOT_MODE_EMMC:
-	case BOOT_MODE_SD:
-		sprintf(write_part_command, "gpt write mmc %x '%s'",
-			CONFIG_FASTBOOT_FLASH_MMC_DEV, fdev->gptinfo.gpt_table);
-		if (run_command(write_part_command, 0)){
-			printf("write gpt fail\n");
-			return -1;
-		}
-		break;
-#endif
-
-#if CONFIG_IS_ENABLED(FASTBOOT_SUPPORT_BLOCK_DEV)
-	case BOOT_MODE_NOR:
-	case BOOT_MODE_NAND:
-		printf("write gpt to dev:%s\n", CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME);
-
-		/*nvme need scan at first*/
-		if (!strncmp("nvme", CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME, 4)
-						&& nvme_scan_namespace()){
-			printf("can not can nvme devices!\n");
-			return -1;
-		}
-
-		sprintf(write_part_command, "gpt write %s %x '%s'",
-			CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME, CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_INDEX,
-			fdev->gptinfo.gpt_table);
-		if (run_command(write_part_command, 0)){
-			printf("write gpt fail\n");
-			return -1;
-		}
-		break;
-#endif
-	default:
-		break;
-	}
-	return 0;
-}
-
-
-static int _write_mtd_partition(char mtd_table[128])
-{
-#ifdef CONFIG_MTD
-	struct mtd_info *mtd;
-	char mtd_ids[36] = {"\0"};
-	char mtd_parts[128] = {"\0"};
-
-	mtd_probe_devices();
-
-	/*
-	try to find the first mtd device, it there have mutil mtd device such as nand and nor,
-	it only use the first one.
-	*/
-	mtd_for_each_device(mtd) {
-		if (!mtd_is_partition(mtd))
-			break;
-	}
-
-	if (mtd == NULL){
-		printf("can not get mtd device\n");
-		return -1;
-	}
-
-	/*to mtd device, it should write mtd table to env.*/
-	sprintf(mtd_ids, "%s=spi-dev", mtd->name);
-	sprintf(mtd_parts, "spi-dev:%s", mtd_table);
-
-	env_set("mtdids", mtd_ids);
-	env_set("mtdparts", mtd_parts);
-#endif
-	return 0;
 }
 
 /* Initialize the mmc device given its number */
@@ -457,6 +366,7 @@ void recovery_show_result(struct flash_dev *fdev, int ret)
 
 	while(1){
 		/* do not retrun while flashing over! */
+		WATCHDOG_RESET();
 	}
 
 }
@@ -478,14 +388,14 @@ int get_part_info(struct blk_desc *dev_desc, const char *name,
 
 
 /**
- * mmc_blk_write() - Write/erase MMC in chunks of MAX_BLK_WRITE
+ * _blk_write() - Write/erase blk dev in chunks of MAX_BLK_WRITE
  *
  * @block_dev: Pointer to block device
  * @start: First block to write/erase
  * @blkcnt: Count of blocks
  * @buffer: Pointer to data buffer for write or NULL for erase
  */
-static __maybe_unused lbaint_t mmc_blk_write(struct blk_desc *block_dev, lbaint_t start,
+static __maybe_unused lbaint_t _blk_write(struct blk_desc *block_dev, lbaint_t start,
 			lbaint_t blkcnt, const void *buffer)
 {
 	lbaint_t blk = start;
@@ -513,7 +423,6 @@ int blk_write_raw_image(struct blk_desc *dev_desc,
 		struct disk_partition *info, const char *part_name,
 		void *buffer, u32 download_bytes)
 {
-#ifdef CONFIG_MMC
 	lbaint_t blkcnt;
 	lbaint_t blks;
 
@@ -528,7 +437,7 @@ int blk_write_raw_image(struct blk_desc *dev_desc,
 
 	puts("Flashing Raw Image\n");
 
-	blks = mmc_blk_write(dev_desc, info->start, blkcnt, buffer);
+	blks = _blk_write(dev_desc, info->start, blkcnt, buffer);
 
 	if (blks != blkcnt) {
 		printf("failed writing to device %d\n", dev_desc->devnum);
@@ -538,10 +447,6 @@ int blk_write_raw_image(struct blk_desc *dev_desc,
 	printf("........ wrote " LBAFU " bytes to '%s'\n", \
 		blkcnt * info->blksz,part_name);
 	return RESULT_OK;
-#else
-	printf("not mmc dev found\n");
-	return RESULT_FAIL;
-#endif
 }
 
 int mtd_write_raw_image(struct mtd_info *mtd, const char *part_name, void *buffer, u32 download_bytes)
@@ -899,11 +804,13 @@ static int parse_flash_config(struct flash_dev *fdev)
 	}
 
 	if (fdev->gptinfo.gpt_table != NULL && strlen(fdev->gptinfo.gpt_table) > 1 && fdev->gptinfo.fastboot_flash_gpt){
-		_write_gpt_partition(fdev);
+		if (_write_gpt_partition(fdev))
+			return -1;
 	}
 
 	if (fdev->mtd_table != NULL && strlen(fdev->mtd_table) > 1){
-		_write_mtd_partition(fdev->mtd_table);
+		if (_write_mtd_partition(fdev))
+			return -1;
 	}
 
 	/*set partition to env*/
@@ -945,17 +852,18 @@ static int load_recovery_file(struct cmd_tbl *cmdtp, struct flash_dev *fdev,
 
 static int perform_flash_operations(struct cmd_tbl *cmdtp, struct flash_dev *fdev)
 {
+	char *blk_dev;
+	int blk_index;
+
 	u32 boot_mode = get_boot_pin_select();
 	switch(boot_mode){
-#ifdef CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME
 	case BOOT_MODE_NOR:
-		/*nvme devices need scan at first*/
-		if (!strncmp("nvme", CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME, 4)){
-			run_command("nvme scan", 0);
+		if (get_available_blk_dev(&blk_dev, &blk_index)){
+			printf("can not get availabel blk dev\n");
+			return -1;
 		}
 
-		fdev->dev_desc = blk_get_dev(CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME,
-							 CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_INDEX);
+		fdev->dev_desc = blk_get_dev(blk_dev, blk_index);
 		if (!fdev->dev_desc || fdev->dev_desc->type == DEV_TYPE_UNKNOWN) {
 			printf("get blk faild\n");
 			return -1;
@@ -964,17 +872,12 @@ static int perform_flash_operations(struct cmd_tbl *cmdtp, struct flash_dev *fde
 		if (flash_image(cmdtp, fdev)) {
 			return RESULT_FAIL;
 		}
-
 		break;
-#endif //CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME
-
 	case BOOT_MODE_NAND:
 		if (flash_image(cmdtp, fdev)) {
 			return RESULT_FAIL;
 		}
-
 		break;
-
 	case BOOT_MODE_EMMC:
 	case BOOT_MODE_SD:
 #ifdef CONFIG_FASTBOOT_FLASH_MMC_DEV
@@ -1041,26 +944,21 @@ void get_mtd_partition_file(struct flash_dev *fdev)
 void get_blk_partition_file(char *file_name)
 {
 	struct blk_desc *dev_desc = NULL;
-	const char *blk_name;
+	char *blk_name;
 	int blk_index;
 
 	u32 boot_mode = get_boot_pin_select();
 	switch(boot_mode){
-#ifdef CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME
 	case BOOT_MODE_NOR:
-		blk_name = CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME;
-		blk_index = CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_INDEX;
-
-		/*nvme devices need scan at first*/
-		if (!strncmp("nvme", CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME, 4)){
-			run_command("nvme scan", 0);
+		if (get_available_blk_dev(&blk_name, &blk_index)){
+			printf("can not get availabel blk dev\n");
+			return;
 		}
 
 		dev_desc = blk_get_devnum_by_typename(blk_name, blk_index);
 		if (dev_desc != NULL)
 			strcpy(file_name, FLASH_CONFIG_FILE_NAME);
 		return;
-#endif //CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME
 	case BOOT_MODE_NAND:
 		return;
 	case BOOT_MODE_EMMC:

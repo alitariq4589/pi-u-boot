@@ -261,9 +261,9 @@ static SPACEMIT_CCU_GATE_NO_PARENT(usb30_clk, "usb30_clk", NULL,
 	0);
 static const char * const qspi_parent_names[] = {"clk_dummy", "clk_dummy", "clk_dummy",
 		"clk_dummy", "clk_dummy", "pll1_d23_106p8"};
-static SPACEMIT_CCU_DIV_MFC_MUX_GATE(qspi_clk, "qspi_clk", qspi_parent_names,
+static SPACEMIT_CCU_DIV_MUX_GATE(qspi_clk, "qspi_clk", qspi_parent_names,
 	BASE_TYPE_APMU, APMU_QSPI_CLK_RES_CTRL,
-	9, 3, BIT(12),
+	9, 3,
 	6, 3, BIT(4), BIT(4), 0x0,
 	0);
 static SPACEMIT_CCU_GATE_NO_PARENT(qspi_bus_clk, "qspi_bus_clk", NULL,
@@ -346,6 +346,9 @@ static const struct ccu_pll_rate_tbl pll2_rate_tbl[] = {
 };
 
 static const struct ccu_pll_rate_tbl pll3_rate_tbl[] = {
+	PLL_RATE(1600000000UL, 0x61, 0xcd, 0x50, 0x00, 0x43, 0xeaaaab),
+	PLL_RATE(1800000000UL, 0x61, 0xcd, 0x50, 0x00, 0x4b, 0x000000),
+	PLL_RATE(2000000000UL, 0x62, 0xdd, 0x50, 0x00, 0x2a, 0xeaaaab),
 	PLL_RATE(3000000000UL, 0x66, 0xdd, 0x50, 0x00, 0x3f, 0xe00000),
 	PLL_RATE(3200000000UL, 0x67, 0xdd, 0x50, 0x00, 0x43, 0xeaaaab),
 	PLL_RATE(2457600000UL, 0x64, 0xdd, 0x50, 0x00, 0x33, 0x0ccccd),

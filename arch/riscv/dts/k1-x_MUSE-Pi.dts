@@ -38,18 +38,6 @@
 
 };
 
-&cpu_0 {
-	/* boot frequency for cluster-0, should be 1600000, 1228000, 819000, or 614000 */
-	boot_freq_cluster0 = <1228000>;
-	/* boot frequency for cluster-1, should be 1600000, 1228000, 819000, or 614000 */
-	boot_freq_cluster1 = <1228000>;
-};
-
-&dramc {
-	/* dram data rate, should be 1200, 1600, or 2400 */
-	datarate = <2400>;
-};
-
 &cpus {
 	timebase-frequency = <24000000>;
 };
@@ -188,10 +176,10 @@
 		dr_mode = "host";
 		phy_type = "utmi";
 		snps,dis_enblslpm_quirk;
-		snps,dis-u2-freeclk-exists-quirk;
-		snps,dis-del-phy-power-chg-quirk;
 		snps,dis_u2_susphy_quirk;
 		snps,dis_u3_susphy_quirk;
+		snps,dis-del-phy-power-chg-quirk;
+		snps,dis-tx-ipgap-linecheck-quirk;
 	};
 };
 
@@ -200,7 +188,6 @@
 	pinctrl-0 = <&pinctrl_mmc1 &gpio80_pmx_func0>;
 	bus-width = <4>;
 	cd-gpios = <&gpio 80 0>;
-	cd-inverted;
 	cap-sd-highspeed;
 	sdh-phy-module = <0>;
 	clk-src-freq = <204800000>;
@@ -257,7 +244,7 @@
 	status = "okay";
 };
 
-/*&qspi {
+&qspi {
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_qspi>;
@@ -270,7 +257,7 @@
 		broken-flash-reset;
 		status = "okay";
 	};
-};*/
+};
 
 &efuse {
 	status = "okay";

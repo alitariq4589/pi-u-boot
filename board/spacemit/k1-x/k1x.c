@@ -32,13 +32,19 @@
 #include <tlv_eeprom.h>
 #include <u-boot/crc.h>
 #include <fb_mtd.h>
+#include <power/pmic.h>
+#include <dm/device.h>
+#include <dm/device-internal.h>
+#include <g_dnl.h>
+#include <fdt_simplefb.h>
+#include <mtd_node.h>
+#include <misc.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 static char found_partition[64] = {0};
 extern u32 ddr_cs_num;
-#ifdef CONFIG_DISPLAY_SPACEMIT_HDMI
-extern int is_hdmi_connected;
-#endif
+bool is_video_connected = false;
+uint32_t reboot_config;
 void refresh_config_info(u8 *eeprom_data);
 int mac_read_from_buffer(u8 *eeprom_data);
 
@@ -98,6 +104,16 @@ enum board_boot_mode get_boot_mode(void)
 
 	/*else return boot pin select*/
 	return get_boot_pin_select();
+}
+
+void set_serialnumber_based_on_boot_mode(void)
+{
+	const char *s = env_get("serial#");
+	enum board_boot_mode boot_mode = get_boot_mode();
+
+	if (boot_mode != BOOT_MODE_USB && s) {
+		g_dnl_set_serialnumber((char *)s);
+	}
 }
 
 enum board_boot_mode get_boot_storage(void)
@@ -218,17 +234,59 @@ void get_ddr_config_info(void)
 		ddr_cs_num = DDR_CS_NUM;
 }
 
+u32 get_reboot_config(void)
+{
+	int ret;
+	struct udevice *dev;
+	u32 flag = 0;
+	uint8_t value;
+
+	if (reboot_config)
+		return reboot_config;
+
+	/* K1 has non-reset register(BOOT_CIU_DEBUG_REG0) to save boot config
+	   before system reboot, but it will be clear when K1 power is down,
+	   then boot config will be save in P1.
+	*/
+	flag = readl((void *)BOOT_CIU_DEBUG_REG0);
+	if ((BOOT_MODE_SHELL == flag) || (BOOT_MODE_USB == flag)) {
+		/* reset  */
+		writel(0, (void *)BOOT_CIU_DEBUG_REG0);
+		reboot_config = flag;
+	}
+	else {
+		// select boot mode from boot strap pin
+		reboot_config = BOOT_MODE_BOOTSTRAP;
+		ret = uclass_get_device_by_driver(UCLASS_PMIC,
+				DM_DRIVER_GET(spacemit_pm8xx), &dev);
+		if (ret) {
+			pr_err("PMIC init failed: %d\n", ret);
+			return 0;
+		}
+		pmic_read(dev, P1_NON_RESET_REG, &value, 1);
+		pr_info("Read PMIC reg %x value %x\n", P1_NON_RESET_REG, value);
+		if (1 == (value & 3)) {
+			reboot_config = BOOT_MODE_USB;
+			value &= ~3;
+			pmic_write(dev, P1_NON_RESET_REG, &value, 1);
+		}
+		else if (2 == (value & 3)) {
+			reboot_config = BOOT_MODE_SHELL;
+			value &= ~3;
+			pmic_write(dev, P1_NON_RESET_REG, &value, 1);
+		}
+	}
+
+	return reboot_config;
+}
+
 void run_fastboot_command(void)
 {
 	u32 boot_mode = get_boot_mode();
 
-	/*if define BOOT_MODE_USB flag in BOOT_CIU_DEBUG_REG0, it would excute fastboot*/
-	u32 cui_flasg = readl((void *)BOOT_CIU_DEBUG_REG0);
-	if (boot_mode == BOOT_MODE_USB || cui_flasg == BOOT_MODE_USB){
+	if (boot_mode == BOOT_MODE_USB || BOOT_MODE_USB == get_reboot_config()) {
 		/* show flash log*/
 		env_set("stdout", env_get("stdout_flash"));
-		/*would reset debug_reg0*/
-		writel(0, (void *)BOOT_CIU_DEBUG_REG0);
 
 		char *cmd_para = "fastboot 0";
 		run_command(cmd_para, 0);
@@ -242,11 +300,7 @@ int run_uboot_shell(void)
 {
 	u32 boot_mode = get_boot_mode();
 
-	/*if define BOOT_MODE_SHELL flag in BOOT_CIU_DEBUG_REG0, it would into uboot shell*/
-	u32 flag = readl((void *)BOOT_CIU_DEBUG_REG0);
-	if (boot_mode == BOOT_MODE_SHELL || flag == BOOT_MODE_SHELL){
-		/*would reset debug_reg0*/
-		writel(0, (void *)BOOT_CIU_DEBUG_REG0);
+	if (boot_mode == BOOT_MODE_SHELL || BOOT_MODE_SHELL == get_reboot_config()) {
 		return 0;
 	}
 	return 1;
@@ -254,16 +308,11 @@ int run_uboot_shell(void)
 
 void _load_env_from_blk(struct blk_desc *dev_desc, const char *dev_name, int dev)
 {
-	/*
-	TODO:
-		load env from bootfs, if bootfs is fat/ext4 at blk dev, use fatload/ext4load.
-	*/
 	int err;
 	u32 part;
 	char cmd[128];
 	struct disk_partition info;
 
-	printf("BPI: :%s\n", "_load_env_from_blk");
 	for (part = 1; part <= MAX_SEARCH_PARTITIONS; part++) {
 		err = part_get_info(dev_desc, part, &info);
 		if (err)
@@ -273,13 +322,8 @@ void _load_env_from_blk(struct blk_desc *dev_desc, const char *dev_name, int dev
 			break;
 		}
 	}
-	if (part > MAX_SEARCH_PARTITIONS) {
-#ifdef BPI
+	if (part > MAX_SEARCH_PARTITIONS)
 		return;
-#else
-		part = 1;
-#endif
-	}
 
 	env_set("bootfs_part", simple_itoa(part));
 	env_set("bootfs_devname", dev_name);
@@ -289,14 +333,12 @@ void _load_env_from_blk(struct blk_desc *dev_desc, const char *dev_name, int dev
 	sprintf(cmd, "load %s %d:%d 0x%x env_%s.txt", dev_name,
 			dev, part, CONFIG_SPL_LOAD_FIT_ADDRESS, CONFIG_SYS_CONFIG_NAME);
 	pr_debug("cmd:%s\n", cmd);
-	printf("BPI: cmd:%s\n", cmd);
 	if (run_command(cmd, 0))
 		return;
 
 	memset(cmd, '\0', 128);
 	sprintf(cmd, "env import -t 0x%x", CONFIG_SPL_LOAD_FIT_ADDRESS);
 	pr_debug("cmd:%s\n", cmd);
-	printf("BPI: cmd:%s\n", cmd);
 	if (!run_command(cmd, 0)){
 		pr_info("load env_%s.txt from bootfs successful\n", CONFIG_SYS_CONFIG_NAME);
 	}
@@ -380,26 +422,18 @@ void import_env_from_bootfs(void)
 #endif
 		break;
 	case BOOT_MODE_NOR:
-#ifdef CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME
 		struct blk_desc *dev_desc;
+		char *blk_name;
+		int blk_index;
 
-		/*nvme need scan at first*/
-		if (!strncmp("nvme", CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME, 4)
-						&& run_command("nvme scan", 0)){
-			pr_err("can not find any nvme devices!\n");
+		if (get_available_boot_blk_dev(&blk_name, &blk_index)){
+			printf("can not get available blk dev\n");
 			return;
 		}
 
-		if (strlen(CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME) > 0){
-			/* First try partition names on the default device */
-			dev_desc = blk_get_dev(CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME,
-								CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_INDEX);
-			if (dev_desc) {
-				_load_env_from_blk(dev_desc, CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME,
-							CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_INDEX);
-			}
-	}
-#endif
+		dev_desc = blk_get_dev(blk_name, blk_index);
+		if (dev_desc)
+			_load_env_from_blk(dev_desc, blk_name, blk_index);
 		break;
 	case BOOT_MODE_EMMC:
 	case BOOT_MODE_SD:
@@ -472,10 +506,16 @@ void setenv_boot_mode(void)
 		env_set("boot_device", "nand");
 		break;
 	case BOOT_MODE_NOR:
+		char *blk_name;
+		int blk_index;
+
+		if (get_available_boot_blk_dev(&blk_name, &blk_index)){
+			printf("can not get available blk dev\n");
+			return;
+		}
+
 		env_set("boot_device", "nor");
-#ifdef CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_NAME
-		env_set("boot_devnum", simple_itoa(CONFIG_FASTBOOT_SUPPORT_BLOCK_DEV_INDEX));
-#endif
+		env_set("boot_devnum", simple_itoa(blk_index));
 		break;
 	case BOOT_MODE_EMMC:
 		env_set("boot_device", "mmc");
@@ -648,6 +688,9 @@ void set_env_ethaddr(u8 *eeprom_data) {
 	eth_env_set_enetaddr("ethaddr", mac_addr);
 	eth_env_set_enetaddr("eth1addr", mac1_addr);
 
+	/*must read before set/write to eeprom using tlv_eeprom command*/
+	run_command("tlv_eeprom", 0);
+
 	/* save mac address to eeprom */
 	snprintf(cmd_str, (sizeof(cmd_str) - 1), "tlv_eeprom set 0x24 %02x:%02x:%02x:%02x:%02x:%02x", \
 			mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
@@ -664,11 +707,8 @@ void set_env_ethaddr(u8 *eeprom_data) {
 
 void set_dev_serial_no(uint8_t *eeprom_data)
 {
-	u8 sn[6] = {0};
-	char cmd_str[128] = {0};
 	struct tlvinfo_tlv *tlv_entry = NULL;
-	int i = 0;
-	unsigned int seed = 0;
+	char *strval;
 
 	// Decide where to read the serial number from
 	if (eeprom_data != NULL) {
@@ -676,32 +716,15 @@ void set_dev_serial_no(uint8_t *eeprom_data)
 	} else {
 		read_from_eeprom(&tlv_entry, TLV_CODE_SERIAL_NUMBER);
 	}
-	if (tlv_entry && tlv_entry->length == 12) {
-		for (i = 0; i < 12; i++) {
-			if (tlv_entry->value[i] != 0) {
-				pr_err("Serial number is valid.\n");
-				return;
-			}
-		}
+
+	if (tlv_entry && (0 < tlv_entry->length) && (tlv_entry->length <= 32)) {
+		pr_info("Serial number is valid.\n");
+		strval = malloc(tlv_entry->length + 1);
+		memcpy(strval, tlv_entry->value, tlv_entry->length);
+		strval[tlv_entry->length] = 0;
+		env_set("serial#", strval);
+		free(strval);
 	}
-
-	pr_info("Generate rand serial number:\n");
-	/* Generate rand serial number */
-	seed = get_ticks();
-	for (i = 0; i < 6; i++) {
-		sn[i] = rand_r(&seed);
-		pr_info("%02x", sn[i]);
-	}
-	pr_info("\n");
-
-	/* save serial number to eeprom */
-	snprintf(cmd_str, (sizeof(cmd_str) - 1), "tlv_eeprom set 0x23 %02x%02x%02x%02x%02x%02x", \
-			sn[0], sn[1], sn[2], sn[3], sn[4], sn[5]);
-	run_command(cmd_str, 0);
-
-	memset(cmd_str, 0, sizeof(cmd_str));
-	snprintf(cmd_str, (sizeof(cmd_str) - 1), "tlv_eeprom write");
-	run_command(cmd_str, 0);
 }
 
 struct code_desc_info {
@@ -714,7 +737,6 @@ void refresh_config_info(u8 *eeprom_data)
 	struct tlvinfo_tlv *tlv_info = NULL;
 	char *strval;
 	int i;
-	char tmp_name[64];
 
 	const struct code_desc_info {
 		u8    m_code;
@@ -750,15 +772,6 @@ void refresh_config_info(u8 *eeprom_data)
 				strval = malloc(tlv_info->length + 1);
 				memcpy(strval, tlv_info->value, tlv_info->length);
 				strval[tlv_info->length] = '\0';
-
-				/*
-					be compatible to previous format name,
-					such as: k1_deb1 -> k1-x_deb1
-				*/
-				if (info[i].m_code == TLV_CODE_PRODUCT_NAME && strncmp(strval, CONFIG_SYS_BOARD, 4)){
-					sprintf(tmp_name, "%s_%s", CONFIG_SYS_BOARD, &strval[3]);
-					strcpy(strval, tmp_name);
-				}
 			}
 			env_set(info[i].m_name, strval);
 			free(strval);
@@ -791,9 +804,6 @@ int board_late_init(void)
 	struct tlvinfo_tlv *first_entry = NULL;
 
 	// save_ddr_training_info();
-	if (IS_ENABLED(CONFIG_SYSRESET_SPACEMIT))
-		device_bind_driver(gd->dm_root, "spacemit_sysreset",
-					"spacemit_sysreset", NULL);
 
 	// it MAY be NULL when did NOT load build-in env and eeprom is empty
 	if (NULL == env_get("product_name"))
@@ -817,6 +827,19 @@ int board_late_init(void)
 		refresh_config_info(NULL);
 	}
 
+	set_serialnumber_based_on_boot_mode();
+
+#ifdef CONFIG_VIDEO_SPACEMIT
+	ret = uclass_probe_all(UCLASS_VIDEO);
+	if (ret) {
+		pr_info("video devices not found or not probed yet: %d\n", ret);
+	}
+	ret = uclass_probe_all(UCLASS_DISPLAY);
+	if (ret) {
+		pr_info("display devices not found or not probed yet: %d\n", ret);
+	}
+#endif
+
 	run_fastboot_command();
 
 	run_cardfirmware_flash_command();
@@ -830,11 +853,9 @@ int board_late_init(void)
 	/*import env.txt from bootfs*/
 	import_env_from_bootfs();
 
-#ifdef CONFIG_DISPLAY_SPACEMIT_HDMI
-	if (is_hdmi_connected < 0) {
+	if (!is_video_connected) {
 		env_set("stdout", "serial");
 	}
-#endif
 
 	setenv_boot_mode();
 
@@ -910,25 +931,6 @@ enum env_location env_get_location(enum env_operation op, int prio)
 
 int misc_init_r(void)
 {
-#ifdef CONFIG_DYNAMIC_DDR_CLK_FREQ
-	int ret;
-	char cmd[32];
-
-	ret = ddr_freq_max();
-	if(ret < 0) {
-		pr_debug("%s: Try to adjust ddr freq failed!\n", __func__);
-		return ret;
-	}
-
-	// change DDR data rate to 2400MT/s and set
-	sprintf(cmd, "ddrfreq %d", 6);
-	pr_debug("cmd:%s\n", cmd);
-	if (run_command(cmd, 0)) {
-			pr_err("DDR frequency change fail\n");
-			return -1;
-	}
-#endif
-
 	return 0;
 }
 
@@ -977,7 +979,17 @@ ulong board_get_usable_ram_top(ulong total_size)
 #if !defined(CONFIG_SPL_BUILD)
 int board_fit_config_name_match(const char *name)
 {
+	char tmp_name[64];
 	char *product_name = env_get("product_name");
+
+	/*
+		be compatible to previous format name,
+		such as: k1_deb1 -> k1-x_deb1
+	*/
+	if (!strncmp(product_name, "k1_", 3)){
+		sprintf(tmp_name, "%s_%s", "k1-x", &product_name[3]);
+		product_name = tmp_name;
+	}
 
 	if ((NULL != product_name) && (0 == strcmp(product_name, name))) {
 		log_emerg("Boot from fit configuration %s\n", name);
@@ -987,3 +999,123 @@ int board_fit_config_name_match(const char *name)
 		return -1;
 }
 #endif
+
+static uint32_t get_dro_from_efuse(void)
+{
+	struct udevice *dev;
+	uint8_t fuses[2];
+	uint32_t dro = SVT_DRO_DEFAULT_VALUE;
+	int ret;
+
+	/* retrieve the device */
+	ret = uclass_get_device_by_driver(UCLASS_MISC,
+			DM_DRIVER_GET(spacemit_k1x_efuse), &dev);
+	if (ret) {
+		return dro;
+	}
+
+	// read from efuse, each bank has 32byte efuse data
+	// SVT-DRO in bank7 bit173~bit181
+	ret = misc_read(dev, 7 * 32 + 21, fuses, sizeof(fuses));
+	if (0 == ret) {
+		// (byte1 bit0~bit5) << 3 | (byte0 bit5~7) >> 5
+		dro = (fuses[0] >> 5) & 0x07;
+		dro |= (fuses[1] & 0x3F) << 3;
+	}
+
+	if (0 == dro)
+		dro = SVT_DRO_DEFAULT_VALUE;
+	return dro;
+}
+
+static int get_chipinfo_from_efuse(uint32_t *product_id, uint32_t *wafer_tid)
+{
+	struct udevice *dev;
+	uint8_t fuses[3];
+	int ret;
+
+	*product_id = 0;
+	*wafer_tid = 0;
+	/* retrieve the device */
+	ret = uclass_get_device_by_driver(UCLASS_MISC,
+			DM_DRIVER_GET(spacemit_k1x_efuse), &dev);
+	if (ret) {
+		return ENODEV;
+	}
+
+	// read from efuse, each bank has 32byte efuse data
+	// product id in bank7 bit182~bit190
+	ret = misc_read(dev, 7 * 32 + 22, fuses, sizeof(fuses));
+	if (0 == ret) {
+		// (byte1 bit0~bit6) << 2 | (byte0 bit6~7) >> 6
+		*product_id = (fuses[0] >> 6) & 0x03;
+		*product_id |= (fuses[1] & 0x7F) << 2;
+	}
+
+	// read from efuse, each bank has 32byte efuse data
+	// product id in bank7 bit139~bit154
+	ret = misc_read(dev, 7 * 32 + 17, fuses, sizeof(fuses));
+	if (0 == ret) {
+		// (byte1 bit0~bit6) << 2 | (byte0 bit3~7) >> 3
+		*wafer_tid = (fuses[0] >> 3) & 0x1F;
+		*wafer_tid |= fuses[1] << 5;
+		*wafer_tid |= (fuses[2] & 0x07) << 13;
+	}
+
+	return 0;
+}
+
+static int ft_board_cpu_fixup(void *blob, struct bd_info *bd)
+{
+	int node, ret;
+	uint32_t dro, product_id, wafer_tid;
+
+	node = fdt_path_offset(blob, "/");
+	if (node < 0) {
+		pr_err("Can't find root node!\n");
+		return -EINVAL;
+	}
+
+	get_chipinfo_from_efuse(&product_id, &wafer_tid);
+	product_id = cpu_to_fdt32(product_id);
+	wafer_tid = cpu_to_fdt32(wafer_tid);
+	fdt_setprop(blob, node, "product-id", &product_id, sizeof(product_id));
+	fdt_setprop(blob, node, "wafer-id", &wafer_tid, sizeof(wafer_tid));
+
+	node = fdt_path_offset(blob, "/cpus");
+	if (node < 0) {
+		pr_err("Can't find cpus node!\n");
+		return -EINVAL;
+	}
+
+	dro = cpu_to_fdt32(get_dro_from_efuse());
+	ret = fdt_setprop(blob, node, "svt-dro", &dro, sizeof(dro));
+	if (ret < 0)
+		return ret;
+	return 0;
+}
+
+int ft_board_setup(void *blob, struct bd_info *bd)
+{
+	struct fdt_memory mem;
+	static const struct node_info nodes[] = {
+		{ "spacemit,k1x-qspi", MTD_DEV_TYPE_NOR, },  /* SPI flash */
+	};
+
+	/* update MTD partition info for nor boot */
+	if (CONFIG_IS_ENABLED(FDT_FIXUP_PARTITIONS) &&
+		BOOT_MODE_NOR == get_boot_mode())
+		fdt_fixup_mtdparts(blob, nodes, ARRAY_SIZE(nodes));
+
+	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
+		/* reserved with no-map tag the video buffer */
+		mem.start = gd->video_bottom;
+		mem.end = gd->video_top - 1;
+
+		fdtdec_add_reserved_memory(blob, "framebuffer", &mem, NULL, 0, NULL,
+			FDTDEC_RESERVED_MEMORY_NO_MAP);
+	}
+
+	ft_board_cpu_fixup(blob, bd);
+	return 0;
+}
