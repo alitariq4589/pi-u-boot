@@ -82,11 +82,12 @@ extern int __data_start[], __data_end[];
 extern int k1x_eeprom_init(void);
 extern int spacemit_eeprom_read(uint8_t chip, uint8_t *buffer, uint8_t id);
 extern bool get_mac_address(uint64_t *mac_addr);
-extern bool get_ddr_cs_number(uint32_t *cs_num);
+extern void update_ddr_info(void);
 extern enum board_boot_mode get_boot_storage(void);
 extern int spl_mtd_read(struct mtd_info *mtd, ulong sector, ulong count, void *buf);
 char *product_name;
 extern u32 ddr_cs_num;
+extern const char *ddr_type;
 
 int timer_init(void)
 {
@@ -139,7 +140,7 @@ static uint32_t adjust_cpu_freq(uint64_t cluster, uint32_t freq)
 	val &= ~(0x07 | BIT(13));
 	switch(freq) {
 	case 1600000:
-		val |= 0x07;
+		val |= 0x07 | BIT(13); //set cpu freq to PLL3_DIV1
 		break;
 
 	case 1228000:
@@ -179,13 +180,16 @@ void raise_cpu_frequency(void)
 	val |= BIT(16) | BIT(15) | BIT(14) | BIT(13);
 	writel(val, (void __iomem *)(K1X_MPMU_BASE + 0x1024));
 
-	/* enable PLL3(3200Mhz) */
+	/* set the frequency of pll3 to 1.6G */
+	writel(0x0050cd61, (void __iomem *)(K1X_APB_SPARE_BASE + 0x124));
+
+	/* enable PLL3 */
 	val = readl((void __iomem *)(K1X_APB_SPARE_BASE + 0x12C));
 	val |= BIT(31);
 	writel(val, (void __iomem *)(K1X_APB_SPARE_BASE + 0x12C));
-	/* enable PLL3_DIV2 */
+	/* enable PLL3_DIV2 and PLL3_DIV1*/
 	val = readl((void __iomem *)(K1X_APB_SPARE_BASE + 0x128));
-	val |= BIT(1);
+	val |= BIT(1) | BIT(0);
 	writel(val, (void __iomem *)(K1X_APB_SPARE_BASE + 0x128));
 
 	cpu = cpu_get_current_dev();
@@ -462,9 +466,7 @@ int spl_board_init_f(void)
 #endif
 	// get_mac_address(&mac_addr);
 
-	// if fail to get ddr cs number from eeprom, update it from dts node
-	if (!get_ddr_cs_number(&ddr_cs_num))
-		ddr_cs_num = 0;
+	update_ddr_info();
 
 	// restore prevous saved ddr training info data
 	// flag = restore_ddr_training_info(chipid, mac_addr);
@@ -526,10 +528,20 @@ void board_init_f(ulong dummy)
 int board_fit_config_name_match(const char *name)
 {
 	char *buildin_name;
+	char tmp_name[64];
 
 	buildin_name = product_name;
 	if (NULL == buildin_name)
 		buildin_name = DEFAULT_PRODUCT_NAME;
+
+	/*
+		be compatible to previous format name,
+		such as: k1_deb1 -> k1-x_deb1
+	*/
+	if (!strncmp(buildin_name, "k1_", 3)){
+		sprintf(tmp_name, "%s_%s", "k1-x", &buildin_name[3]);
+		buildin_name = tmp_name;
+	}
 
 	if ((NULL != buildin_name) && (0 == strcmp(buildin_name, name))) {
 		log_emerg("Boot from fit configuration %s\n", name);
@@ -643,22 +655,12 @@ char *get_product_name(void)
 {
 	char *name = NULL;
 	int eeprom_addr;
-	char tmp_name[64];
 
 	eeprom_addr = k1x_eeprom_init();
 	name = calloc(1, 64);
 	if ((eeprom_addr >= 0) && (NULL != name) && (0 == spacemit_eeprom_read(
 		eeprom_addr, name, TLV_CODE_PRODUCT_NAME))) {
 		pr_info("Get product name from eeprom %s\n", name);
-
-		/*
-			be compatible to previous format name,
-			such as: k1_deb1 -> k1-x_deb1
-		*/
-		if (strncmp(name, CONFIG_SYS_BOARD, 4)){
-			sprintf(tmp_name, "%s_%s", CONFIG_SYS_BOARD, &name[3]);
-			strcpy(name, tmp_name);
-		}
 		return name;
 	}
 
@@ -669,18 +671,28 @@ char *get_product_name(void)
 	return NULL;
 }
 
-bool get_ddr_cs_number(uint32_t *cs_num)
+void update_ddr_info(void)
 {
 	int eeprom_addr;
+	uint8_t *info;
 
 	eeprom_addr = k1x_eeprom_init();
-	if ((eeprom_addr >= 0) && (NULL != cs_num) && (0 == spacemit_eeprom_read(
-		eeprom_addr, (uint8_t*)cs_num, TLV_CODE_DDR_CSNUM))) {
-		pr_info("Get ddr cs num %d from eeprom\n", *cs_num);
-		return true;
-	}
+	if (eeprom_addr < 0)
+		return;
 
-	return false;
+	// read ddr type from eeprom
+	info = malloc(32);
+	memset(info, 0, 32);
+	if (0 == spacemit_eeprom_read(eeprom_addr, info, TLV_CODE_DDR_TYPE))
+		ddr_type = info;
+	else
+		free(info);
+
+	// if fail to get ddr cs number from eeprom, update it from dts node
+	if (0 == spacemit_eeprom_read(eeprom_addr, (uint8_t*)&ddr_cs_num, TLV_CODE_DDR_CSNUM))
+		pr_info("Get ddr cs num %d from eeprom\n", ddr_cs_num);
+	else
+		ddr_cs_num = 0;
 }
 
 void spl_board_init(void)

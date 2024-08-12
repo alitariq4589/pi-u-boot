@@ -284,5 +284,36 @@ int flash_mmc_boot_op(struct blk_desc *dev_desc, void *buffer,
 
 char *parse_mtdparts_and_find_bootfs(void);
 int get_partition_index_by_name(const char *part_name, int *part_index);
+int check_gzip_format(const unsigned char *src, unsigned long len);
+int clear_eeprom(u32 dev, u32 erase_size);
+void clear_storage_data(char *cmd_parameter, char *response);
+int _write_gpt_partition(struct flash_dev *fdev);
+int _write_mtd_partition(struct flash_dev *fdev);
+
+/**
+ * @brief detect blk dev exist or not.
+ *
+ * @param blk_name try to find blk dev.
+ * @param partition try to find partition exist or not.
+* @return int return partition index while finding partition in blk dev.
+*/
+int detect_blk_dev_or_partition_exist(char *blk_name, int blk_index, const char *partition);
+
+/**
+ * @brief try to find available blk dev while defind multi blks at nor boot.
+ *
+ * @param blk_dev return available blk dev.
+ * @param index return available blk index.
+ * @param return return 0 while detect available blk dev.
+*/
+int get_available_blk_dev(char **blk_dev, int *index);
+
+/**
+ * @brief try to find available bootable blk dev.
+ * @param blk_dev return available bootable blk dev.
+ * @param index return available bootable blk index.
+ * @param return return 0 while detect available blk dev.
+*/
+int get_available_boot_blk_dev(char **blk_dev, int *index);
 
 #endif
