@@ -22,7 +22,12 @@
 #include <linux/compat.h>
 #include <linux/io.h>
 #include <linux/sizes.h>
+#ifdef CONFIG_ARCH_RMOBILE
 #include <asm/arch/rmobile.h>
+#endif
+#ifdef CONFIG_RZF_DEV
+#include <asm/arch-rzmpu/sh_sdhi.h>
+#endif
 #include <asm/arch/sh_sdhi.h>
 #include <asm/global_data.h>
 #include <clk.h>
@@ -842,6 +847,7 @@ static int sh_sdhi_dm_probe(struct udevice *dev)
 	if (!host->addr)
 		return -ENOMEM;
 
+#if !defined(CONFIG_R9A09G057)
 	ret = clk_get_by_index(dev, 0, &sh_sdhi_clk);
 	if (ret) {
 		debug("failed to get clock, ret=%d\n", ret);
@@ -853,6 +859,7 @@ static int sh_sdhi_dm_probe(struct udevice *dev)
 		debug("failed to enable clock, ret=%d\n", ret);
 		return ret;
 	}
+#endif
 
 	host->quirks = quirks;
 
@@ -894,6 +901,12 @@ static int sh_sdhi_dm_probe(struct udevice *dev)
 static const struct udevice_id sh_sdhi_sd_match[] = {
 	{ .compatible = "renesas,sdhi-r8a7795", .data = SH_SDHI_QUIRK_64BIT_BUF },
 	{ .compatible = "renesas,sdhi-r8a7796", .data = SH_SDHI_QUIRK_64BIT_BUF },
+	{ .compatible = "renesas,sdhi-r9a07g044l", .data = SH_SDHI_QUIRK_64BIT_BUF },
+	{ .compatible = "renesas,sdhi-r9a07g054l", .data = SH_SDHI_QUIRK_64BIT_BUF },
+	{ .compatible = "renesas,sdhi-r9a07g044c", .data = SH_SDHI_QUIRK_64BIT_BUF },
+	{ .compatible = "renesas,sdhi-r9a07g043u", .data = SH_SDHI_QUIRK_64BIT_BUF },
+	{ .compatible = "renesas,sdhi-r9a07g043f", .data = SH_SDHI_QUIRK_64BIT_BUF },
+	{ .compatible = "renesas,sdhi-r9a09g057", .data = SH_SDHI_QUIRK_64BIT_BUF },
 	{ /* sentinel */ }
 };
 

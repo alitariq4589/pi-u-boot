@@ -617,6 +617,10 @@ int renesas_sdhi_execute_tuning(struct udevice *dev, uint opcode)
 			priv->smpcmp |= BIT(i);
 
 		mdelay(1);
+
+		/* send stop after store result of smpcmp */
+		if (ret)
+			mmc_abort_tuning(mmc, opcode);
 	}
 
 	ret = renesas_sdhi_select_tuning(priv, taps);
@@ -953,6 +957,9 @@ static void renesas_sdhi_filter_caps(struct udevice *dev)
 		priv->read_poll_flag = TMIO_SD_DMA_INFO1_END_RD;
 	else
 		priv->read_poll_flag = TMIO_SD_DMA_INFO1_END_RD2;
+
+	/* Host need to send stop command during tuning in SD */
+	plat->cfg.host_caps |= MMC_CAP2_STOP_TUNE_SD;
 }
 
 static int renesas_sdhi_probe(struct udevice *dev)

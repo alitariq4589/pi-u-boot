@@ -908,6 +908,7 @@ dtb-$(CONFIG_RCAR_GEN3) += \
 	r8a774e1-beacon-rzg2h-kit.dtb \
 	r8a774a1-hihope-rzg2m-u-boot.dtb \
 	r8a774b1-hihope-rzg2n-u-boot.dtb \
+	r8a774c0-ek874-revc-u-boot.dtb \
 	r8a774c0-ek874-u-boot.dtb \
 	r8a774e1-hihope-rzg2h-u-boot.dtb \
 	r8a77950-ulcb-u-boot.dtb \
@@ -920,7 +921,20 @@ dtb-$(CONFIG_RCAR_GEN3) += \
 	r8a77980-condor-u-boot.dtb \
 	r8a77990-ebisu-u-boot.dtb \
 	r8a77995-draak-u-boot.dtb \
-	r8a779a0-falcon-u-boot.dtb
+	r8a779a0-falcon-u-boot.dtb \
+	rzg2l-dev.dtb \
+	smarc-rzg2l.dtb \
+	rzv2l-dev.dtb \
+	smarc-rzv2l.dtb \
+	rzg2lc-dev.dtb \
+	smarc-rzg2lc.dtb \
+	rzg2ul-type1-dev.dtb \
+	rzg2ul-type1-ddr3l-dev.dtb \
+	rzg2ul-type2-dev.dtb \
+	smarc-rzg2ul.dtb \
+	rzv2h-dev.dtb \
+	rzv2h-evk-alpha.dtb \
+	rzv2h-evk-ver1.dtb
 
 ifdef CONFIG_RCAR_GEN3
 DTC_FLAGS += -R 4 -p 0x1000

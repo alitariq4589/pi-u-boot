@@ -1,4 +1,4 @@
-if ARCH_RMOBILE
+if ( ARCH_RMOBILE || RZF_DEV )
 
 config PINCTRL_PFC
 	bool "Renesas pin control drivers"
@@ -119,5 +119,15 @@ config PINCTRL_PFC_R7S72100
 	default y if CPU_RZA1
 	help
 	  Support pin multiplexing control on Renesas RZ/A1 R7S72100 SoCs.
+
+config PINCTRL_PFC_RZG2L
+	bool "Renesas RZ/G2L pin control driver"
+	help
+	  Support pin multiplexing control on Renesas RZ/G2L SoCs.
+
+config PINCTRL_PFC_RZV2H
+	bool "Renesas RZ/V2H pin control driver"
+	help
+	  Support pin multiplexing control on Renesas RZ/V2H SoCs.
 
 endif
