@@ -92,7 +92,7 @@
 	"bootcmd_check=if mmc dev 1; then run sd1load; else run sd0load; fi \0"
 #endif
 
-#define CONFIG_BOOTCOMMAND	"env default -a;if fatload mmc 0:1 0x58000000 boot.scr; then echo BPI do boot.scr ; source 0x58000000; else run bootcmd_check; fi; run bootimage"
+#define CONFIG_BOOTCOMMAND	"env default -a;if fatload mmc 0:1 0x48070000 boot.scr; then echo BPI do boot.scr ; source 0x48070000; else run bootcmd_check; fi; run bootimage"
 
 /* For board */
 /* Ethernet RAVB */
