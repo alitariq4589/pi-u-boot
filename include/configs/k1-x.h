@@ -18,6 +18,7 @@
 
 #define RISCV_MMODE_TIMER_FREQ	24000000
 #define RISCV_SMODE_TIMER_FREQ	24000000
+#define RISCV_TIMER_FREQ	(RISCV_SMODE_TIMER_FREQ)
 
 #define CONFIG_IPADDR		10.0.92.253
 #define CONFIG_SERVERIP		10.0.92.134
@@ -77,6 +78,7 @@
 #define TLV_CODE_SDK_VERSION		0x40
 #define TLV_CODE_DDR_CSNUM		0x41
 #define TLV_CODE_DDR_TYPE		0x42
+#define TLV_CODE_DDR_DATARATE		0x43
 
 #define TLV_CODE_PMIC_TYPE		0x80
 #define TLV_CODE_EEPROM_I2C_INDEX	0x81
@@ -172,11 +174,6 @@ struct boot_storage_op
 	"dtb_addr=" __stringify(DTB_LOAD_ADDR) "\0" \
 	"scriptaddr=0x2c100000\0" \
 	"pxefile_addr_r=0x0c200000\0" \
-	"ipaddr=192.168.1.15\0" \
-	"netmask=255.255.255.0\0" \
-	"serverip=10.0.92.134\0" \
-	"gatewayip=192.168.1.1\0" \
-	"net_data_path=spacemit_flash_file/net_flash_file/\0" \
 	"splashimage=" __stringify(CONFIG_FASTBOOT_BUF_ADDR) "\0" \
 	"splashpos=m,m\0" \
 	"splashfile=bianbu.bmp\0" \

@@ -80,13 +80,13 @@
 
 extern int __data_start[], __data_end[];
 extern int k1x_eeprom_init(void);
-extern int spacemit_eeprom_read(uint8_t chip, uint8_t *buffer, uint8_t id);
+extern int spacemit_eeprom_read(uint8_t *buffer, uint8_t id);
 extern bool get_mac_address(uint64_t *mac_addr);
 extern void update_ddr_info(void);
 extern enum board_boot_mode get_boot_storage(void);
 extern int spl_mtd_read(struct mtd_info *mtd, ulong sector, ulong count, void *buf);
 char *product_name;
-extern u32 ddr_cs_num;
+extern u32 ddr_cs_num, ddr_datarate;;
 extern const char *ddr_type;
 
 int timer_init(void)
@@ -140,7 +140,7 @@ static uint32_t adjust_cpu_freq(uint64_t cluster, uint32_t freq)
 	val &= ~(0x07 | BIT(13));
 	switch(freq) {
 	case 1600000:
-		val |= 0x07 | BIT(13); //set cpu freq to PLL3_DIV1
+		val |= 0x07;
 		break;
 
 	case 1228000:
@@ -180,16 +180,13 @@ void raise_cpu_frequency(void)
 	val |= BIT(16) | BIT(15) | BIT(14) | BIT(13);
 	writel(val, (void __iomem *)(K1X_MPMU_BASE + 0x1024));
 
-	/* set the frequency of pll3 to 1.6G */
-	writel(0x0050cd61, (void __iomem *)(K1X_APB_SPARE_BASE + 0x124));
-
-	/* enable PLL3 */
+	/* enable PLL3(3200Mhz) */
 	val = readl((void __iomem *)(K1X_APB_SPARE_BASE + 0x12C));
 	val |= BIT(31);
 	writel(val, (void __iomem *)(K1X_APB_SPARE_BASE + 0x12C));
-	/* enable PLL3_DIV2 and PLL3_DIV1*/
+	/* enable PLL3_DIV2 */
 	val = readl((void __iomem *)(K1X_APB_SPARE_BASE + 0x128));
-	val |= BIT(1) | BIT(0);
+	val |= BIT(1);
 	writel(val, (void __iomem *)(K1X_APB_SPARE_BASE + 0x128));
 
 	cpu = cpu_get_current_dev();
@@ -639,11 +636,8 @@ static void spl_load_env(void)
 
 bool get_mac_address(uint64_t *mac_addr)
 {
-	int eeprom_addr;
-
-	eeprom_addr = k1x_eeprom_init();
-	if ((eeprom_addr >= 0) && (NULL != mac_addr) && (0 == spacemit_eeprom_read(
-		eeprom_addr, (uint8_t*)mac_addr, TLV_CODE_MAC_BASE))) {
+	if ((k1x_eeprom_init() >= 0) && (NULL != mac_addr) &&
+		(0 == spacemit_eeprom_read((uint8_t*)mac_addr, TLV_CODE_MAC_BASE))) {
 		pr_info("Get mac address %llx from eeprom\n", *mac_addr);
 		return true;
 	}
@@ -654,12 +648,10 @@ bool get_mac_address(uint64_t *mac_addr)
 char *get_product_name(void)
 {
 	char *name = NULL;
-	int eeprom_addr;
 
-	eeprom_addr = k1x_eeprom_init();
 	name = calloc(1, 64);
-	if ((eeprom_addr >= 0) && (NULL != name) && (0 == spacemit_eeprom_read(
-		eeprom_addr, name, TLV_CODE_PRODUCT_NAME))) {
+	if ((k1x_eeprom_init() >= 0) && (NULL != name) &&
+		(0 == spacemit_eeprom_read(name, TLV_CODE_PRODUCT_NAME))) {
 		pr_info("Get product name from eeprom %s\n", name);
 		return name;
 	}
@@ -673,26 +665,33 @@ char *get_product_name(void)
 
 void update_ddr_info(void)
 {
-	int eeprom_addr;
 	uint8_t *info;
 
-	eeprom_addr = k1x_eeprom_init();
-	if (eeprom_addr < 0)
+	if (k1x_eeprom_init() < 0)
 		return;
 
 	// read ddr type from eeprom
 	info = malloc(32);
 	memset(info, 0, 32);
-	if (0 == spacemit_eeprom_read(eeprom_addr, info, TLV_CODE_DDR_TYPE))
+	if (0 == spacemit_eeprom_read(info, TLV_CODE_DDR_TYPE))
 		ddr_type = info;
 	else
 		free(info);
 
 	// if fail to get ddr cs number from eeprom, update it from dts node
-	if (0 == spacemit_eeprom_read(eeprom_addr, (uint8_t*)&ddr_cs_num, TLV_CODE_DDR_CSNUM))
+	if (0 == spacemit_eeprom_read((uint8_t*)&ddr_cs_num, TLV_CODE_DDR_CSNUM))
 		pr_info("Get ddr cs num %d from eeprom\n", ddr_cs_num);
 	else
 		ddr_cs_num = 0;
+
+	// if fail to get ddr cs number from eeprom, update it from dts node
+	if (0 == spacemit_eeprom_read((uint8_t*)&ddr_datarate, TLV_CODE_DDR_DATARATE)) {
+		// convert it from big endian to little endian
+		ddr_datarate = be16_to_cpu(ddr_datarate);
+		pr_info("Get ddr datarate %d from eeprom\n", ddr_datarate);
+	}
+	else
+		ddr_datarate = 0;
 }
 
 void spl_board_init(void)

@@ -23,6 +23,13 @@
 		bootargs = "earlycon=sbi console=ttyS0,115200 debug loglevel=8,initcall_debug=1 rdinit=/init.tmp";
 		stdout-path = "serial0:115200n8";
 	};
+
+	usb3hub: usb3hub {
+		compatible = "spacemit,usb-hub";
+		vbus-gpios = <&gpio 123 0>;
+		status = "okay";
+	};
+
 };
 
 &cpus {
@@ -127,8 +134,34 @@
 	status = "okay";
 };
 
+&usbphy1 {
+	status = "okay";
+};
+
+&ehci1 {
+	status = "okay";
+};
+
 &usb2phy {
 	status = "okay";
+};
+
+&combphy {
+	status = "okay";
+};
+
+&usbdrd3 {
+	status = "okay";
+	vbus-supply = <&usb3hub>;
+	dwc3@c0a00000 {
+		dr_mode = "host";
+		phy_type = "utmi";
+		snps,dis_enblslpm_quirk;
+		snps,dis_u2_susphy_quirk;
+		snps,dis_u3_susphy_quirk;
+		snps,dis-del-phy-power-chg-quirk;
+		snps,dis-tx-ipgap-linecheck-quirk;
+	};
 };
 
 &sdhci0 {
@@ -195,6 +228,18 @@
 	};
 };
 
+&pwm14 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_pwm14_1>;
+	status = "okay";
+};
+
+&backlight {
+	pwms = <&pwm14 0 2000>;
+	default-brightness-level = <7>;
+	status = "okay";
+};
+
 &mipi_dsi {
 	bit-clk = <933000000>;
 	pix-clk = <142000000>;
@@ -214,7 +259,7 @@
 
 &panel {
 	force-attached = "lt8911ext_edp_1080p";
-	bl-gpios = <&gpio 44 0>;
+	backlight = <&backlight>;
 	status = "okay";
 };
 

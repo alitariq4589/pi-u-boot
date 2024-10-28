@@ -29,6 +29,9 @@
 extern u32 ddr_cs_num;
 extern const char *ddr_type;
 extern int ddr_freq_change(u32 data_rate);
+extern void qos_set_default(void);
+
+u32 ddr_datarate;
 
 static int test_pattern(fdt_addr_t base, fdt_size_t size)
 {
@@ -126,7 +129,6 @@ static int spacemit_ddr_probe(struct udevice *dev)
 #ifdef CONFIG_K1_X_BOARD_FPGA
 	void (*ddr_init)(void);
 #else
-	uint32_t ddr_datarate;
 	fdt_addr_t ddrc_base;
 
 	ddrc_base = dev_read_addr(dev);
@@ -137,16 +139,16 @@ static int spacemit_ddr_probe(struct udevice *dev)
 	ddr_init();
 #else
 
-	/* check if dram data-rate is configued in dts */
-	if(dev_read_u32u(dev, "datarate", &ddr_datarate)) {
+	/* if dram data-rate is NOT configued in eeprom or in dts, use default value */
+	if ((0 == ddr_datarate) && (dev_read_u32u(dev, "datarate", &ddr_datarate))) {
 		pr_info("ddr data rate not configed in dts, use 1200 as default!\n");
 		ddr_datarate = 1200;
 	} else {
-		pr_info("ddr data rate is %u configured in dts\n", ddr_datarate);
+		pr_info("ddr data rate is configured as %dMT/s\n", ddr_datarate);
 	}
 
 	/* if DDR cs number is NOT configued in eeprom or in dts, use default value */
-	if((0 == ddr_cs_num) && dev_read_u32u(dev, "cs-num", &ddr_cs_num)) {
+	if ((0 == ddr_cs_num) && dev_read_u32u(dev, "cs-num", &ddr_cs_num)) {
 		pr_info("ddr cs number not configed in dts!\n");
 		ddr_cs_num = DDR_CS_NUM;
 	}
@@ -169,6 +171,9 @@ static int spacemit_ddr_probe(struct udevice *dev)
 		pr_err("dram init failed!\n");
 		return -EIO;
 	}
+#ifdef CONFIG_DDR_QOS
+	qos_set_default();
+#endif
 	pr_info("dram init done\n");
 
 	return 0;
