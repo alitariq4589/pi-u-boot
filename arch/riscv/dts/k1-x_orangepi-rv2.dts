@@ -8,7 +8,7 @@
 #include "k1-x_spm8821.dtsi"
 
 / {
-	model = "SiPEED LPi3A board";
+	model = "spacemit k1-x orangepi-rv2 board";
 
 	aliases {
 		efuse_power = &ldo_31;
@@ -24,16 +24,18 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	usb3hub:usb3hub {
+	usb2hub: usb2hub {
 		compatible = "spacemit,usb-hub";
-		hub-gpios = <
-			&gpio 123 0	/* usb3 hub en */
-			&gpio 124 0>;	/* usb3 hub rst*/
-		vbus-gpios = <&gpio 97 0>;	/* gpio_97 for usb3 hub output vbus */
-		regulator-force-boot-off;
-		vbus_delay_ms = <250>;
+		vbus-gpios = <&gpio 123 0>;	/* for usb2 hub output vbus */
 		status = "okay";
 	};
+
+	usb3hub: usb3hub {
+		compatible = "spacemit,usb-hub";
+		vbus-gpios = <&gpio 79 0>;	/* gpio_79 for usb3 pwren */
+		status = "okay";
+	};
+
 };
 
 &cpus {
@@ -92,23 +94,24 @@
 	pinctrl-single,gpio-range = <
 		&range GPIO_49  2 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_3V_DS4)
 		&range GPIO_58  1 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
-		&range GPIO_63  2 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
+		&range GPIO_63  1 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
+		&range GPIO_64  1 (MUX_MODE1 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range GPIO_65  1 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
 		&range GPIO_66  2 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range PRI_TDI  2 (MUX_MODE1 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
 		&range PRI_TCK  1 (MUX_MODE1 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range PRI_TDO  1 (MUX_MODE1 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
 		&range GPIO_74  1 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
+		&range GPIO_79  1 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
 		&range GPIO_80  1 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_3V_DS4)
 		&range GPIO_81  3 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
 		&range GPIO_90  1 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range GPIO_91  2 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
-		&range DVL0     1 (MUX_MODE1 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
-		&range DVL1     1 (MUX_MODE1 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS0)
+		&range DVL0     2 (MUX_MODE1 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range GPIO_110 1 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range GPIO_114 1 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range GPIO_115 2 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
-		&range GPIO_123 1 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS0)
+		&range GPIO_123 1 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 		&range GPIO_124 1 (MUX_MODE0 | EDGE_NONE | PULL_UP   | PAD_1V8_DS2)
 		&range GPIO_125 3 (MUX_MODE0 | EDGE_NONE | PULL_DOWN | PAD_1V8_DS2)
 	>;
@@ -124,9 +127,11 @@
 	gpio-ranges = <
 		&pinctrl 49 GPIO_49 2
 		&pinctrl 58 GPIO_58 1
-		&pinctrl 63 GPIO_63 5
+		&pinctrl 63 GPIO_63 1
+		&pinctrl 65 GPIO_65 3
 		&pinctrl 70 PRI_TDI 4
 		&pinctrl 74 GPIO_74 1
+		&pinctrl 79 GPIO_79 1
 		&pinctrl 80 GPIO_80 4
 		&pinctrl 90 GPIO_90 3
 		&pinctrl 96 DVL0 2
@@ -140,6 +145,15 @@
 	status = "okay";
 };
 
+&usbphy1 {
+	status = "okay";
+};
+
+&ehci1 {
+	vbus-supply = <&usb2hub>;
+	status = "okay";
+};
+
 &usb2phy {
 	status = "okay";
 };
@@ -147,6 +161,7 @@
 &combphy {
 	status = "okay";
 };
+
 
 &usbdrd3 {
 	status = "okay";
@@ -176,7 +191,7 @@
 	spacemit,apbc_assar_reg = <0xD4015054>;
 	spacemit,rx_dline_reg = <0x0>;
 	spacemit,tx_dline_reg = <0x0>;
-	spacemit,tx_delaycode = <0x7f>;
+	spacemit,tx_delaycode = <0x9f>;
 	spacemit,rx_tuning_limit = <50>;
 	sdh-phy-module = <0>;
 	clk-src-freq = <204800000>;
