@@ -15,8 +15,10 @@
 #include <asm/cb_sysinfo.h>
 #endif
 
-#define U_BOOT_VERSION_STRING U_BOOT_VERSION " (" U_BOOT_DATE " - " \
-	U_BOOT_TIME " " U_BOOT_TZ ")" CONFIG_IDENT_STRING
+// #define U_BOOT_VERSION_STRING U_BOOT_VERSION " (" U_BOOT_DATE " - " 
+// 	U_BOOT_TIME " " U_BOOT_TZ ")" CONFIG_IDENT_STRING
+
+#define U_BOOT_VERSION_STRING U_BOOT_VERSION "Cloud-V Version"
 
 const char version_string[] = U_BOOT_VERSION_STRING;
 
